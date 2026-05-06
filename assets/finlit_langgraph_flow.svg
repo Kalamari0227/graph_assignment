@@ -1,0 +1,70 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="720" fill="#F8FAFC"/>
+
+  <text x="70" y="70" font-size="38" font-weight="700" font-family="Arial, Apple SD Gothic Neo, sans-serif" fill="#0F172A">
+    FinLit Reading Coach
+  </text>
+  <text x="72" y="110" font-size="21" font-family="Arial, Apple SD Gothic Neo, sans-serif" fill="#475569">
+    LangGraph 기반 경제뉴스 문해력 튜터 — 노드와 엣지 다이어그램
+  </text>
+
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 z" fill="#334155"/>
+    </marker>
+    <style>
+      .node-title { font: 700 22px Arial, Apple SD Gothic Neo, sans-serif; fill: #0F172A; text-anchor: middle; }
+      .node-desc { font: 17px Arial, Apple SD Gothic Neo, sans-serif; fill: #334155; text-anchor: middle; }
+      .badge { font: 14px Arial, Apple SD Gothic Neo, sans-serif; fill: #0F172A; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <line x1="220" y1="330" x2="300" y2="330" stroke="#334155" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="500" y1="330" x2="580" y2="330" stroke="#334155" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="820" y1="330" x2="900" y2="330" stroke="#334155" stroke-width="4" marker-end="url(#arrow)"/>
+  <polyline points="1000,400 1000,480 700,480 700,525" fill="none" stroke="#334155" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="820" y1="590" x2="900" y2="590" stroke="#334155" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <g>
+    <rect x="70" y="270" width="150" height="120" rx="22" fill="#E0F2FE" stroke="#38BDF8" stroke-width="3"/>
+    <text x="145" y="325" class="node-title">START</text>
+    <text x="145" y="355" class="node-desc">학습 요청 입력</text>
+  </g>
+
+  <g>
+    <rect x="300" y="245" width="200" height="170" rx="22" fill="#EEF2FF" stroke="#818CF8" stroke-width="3"/>
+    <text x="400" y="315" class="node-title">analyze_request</text>
+    <text x="400" y="350" class="node-desc">학습 요청 분석</text>
+    <text x="400" y="378" class="node-desc">주제·난이도 추정</text>
+  </g>
+
+  <g>
+    <rect x="580" y="245" width="240" height="170" rx="22" fill="#F0FDFA" stroke="#2DD4BF" stroke-width="3"/>
+    <text x="700" y="310" class="node-title">build_micro_lesson</text>
+    <text x="700" y="345" class="node-desc">미니 레슨 생성</text>
+    <text x="700" y="373" class="node-desc">핵심 개념·오해 포인트</text>
+  </g>
+
+  <g>
+    <rect x="900" y="245" width="200" height="170" rx="22" fill="#FEF9C3" stroke="#FACC15" stroke-width="3"/>
+    <text x="1000" y="315" class="node-title">create_quiz</text>
+    <text x="1000" y="350" class="node-desc">객관식 퀴즈 생성</text>
+  </g>
+
+  <g>
+    <rect x="580" y="525" width="240" height="130" rx="22" fill="#FFE4E6" stroke="#FB7185" stroke-width="3"/>
+    <text x="700" y="580" class="node-title">grade_answer</text>
+    <text x="700" y="615" class="node-desc">답변 채점·피드백</text>
+  </g>
+
+  <g>
+    <rect x="900" y="535" width="160" height="110" rx="22" fill="#DCFCE7" stroke="#22C55E" stroke-width="3"/>
+    <text x="980" y="585" class="node-title">END</text>
+    <text x="980" y="615" class="node-desc">학습 결과 출력</text>
+  </g>
+
+  <rect x="70" y="645" width="1060" height="44" rx="18" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="95" y="673" font-size="17" font-family="Arial, Apple SD Gothic Neo, sans-serif" fill="#334155">
+    State: user_input → topic/level → lesson → quiz → feedback → review_sentence
+  </text>
+</svg>

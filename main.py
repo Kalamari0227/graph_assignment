@@ -1,0 +1,186 @@
+from typing import TypedDict, List, Dict
+from langgraph.graph import StateGraph, START, END
+
+
+class TutorState(TypedDict):
+    user_input: str
+    topic: str
+    level: str
+    lesson: List[str]
+    quiz: List[Dict[str, str]]
+    answer: str
+    feedback: str
+    review_sentence: str
+
+
+def analyze_request(state: TutorState) -> TutorState:
+    """사용자 입력에서 학습 주제와 난이도를 간단히 추정합니다."""
+    text = state["user_input"]
+
+    if "기준금리" in text or "금리" in text:
+        topic = "기준금리"
+    elif "환율" in text:
+        topic = "환율"
+    elif "물가" in text or "인플레이션" in text:
+        topic = "물가"
+    elif "공시" in text:
+        topic = "기업공시"
+    else:
+        topic = "경제뉴스 읽기"
+
+    if any(word in text for word in ["초보", "입문", "쉽게", "처음"]):
+        level = "입문"
+    elif any(word in text for word in ["심화", "분석", "투자자"]):
+        level = "심화"
+    else:
+        level = "기초"
+
+    return {
+        **state,
+        "topic": topic,
+        "level": level,
+    }
+
+
+def build_micro_lesson(state: TutorState) -> TutorState:
+    """주제와 난이도에 맞는 짧은 학습 콘텐츠를 만듭니다."""
+    topic = state["topic"]
+
+    if topic == "기준금리":
+        lesson = [
+            "오늘 읽을 문장: 한국은행이 기준금리를 동결하면서 시장은 향후 인하 시점에 주목하고 있다.",
+            "핵심 개념: 기준금리는 경제 전체의 돈값을 정하는 기준입니다.",
+            "그냥 읽으면 놓치는 포인트: 동결은 '아무 일도 없음'이 아니라, 중앙은행이 물가와 경기 사이에서 아직 신중하다는 신호일 수 있습니다.",
+            "나와의 연결: 기준금리는 예금금리, 대출금리, 환율, 주식시장 기대감에 영향을 줍니다.",
+        ]
+        review_sentence = "기준금리 동결 뉴스는 금리가 그대로라는 뜻을 넘어, 중앙은행이 다음 방향을 아직 확정하지 않았다는 신호로 읽어야 합니다."
+    elif topic == "환율":
+        lesson = [
+            "오늘 읽을 문장: 원/달러 환율이 상승하면서 수입 물가 부담이 커질 수 있다는 우려가 나왔다.",
+            "핵심 개념: 환율은 한 나라 돈과 다른 나라 돈의 교환 비율입니다.",
+            "그냥 읽으면 놓치는 포인트: 환율 상승은 수출기업에는 유리할 수 있지만, 수입물가에는 부담이 될 수 있습니다.",
+            "나와의 연결: 해외여행, 수입품 가격, 기업 실적, 물가에 영향을 줄 수 있습니다.",
+        ]
+        review_sentence = "환율 뉴스는 숫자의 상승·하락보다 누가 이익을 보고 누가 부담을 지는지 함께 읽어야 합니다."
+    else:
+        lesson = [
+            f"오늘의 주제: {topic}",
+            "핵심 개념: 경제뉴스는 결과보다 원인과 다음 변화를 읽는 것이 중요합니다.",
+            "그냥 읽으면 놓치는 포인트: 기사 문장 뒤에 있는 숫자, 이해관계자, 정책 신호를 함께 봐야 합니다.",
+            "나와의 연결: 경제뉴스는 소비, 투자, 취업, 기업 활동과 연결됩니다.",
+        ]
+        review_sentence = "경제뉴스는 사건 자체보다 그 사건이 어떤 판단으로 이어지는지 읽는 연습이 중요합니다."
+
+    return {
+        **state,
+        "lesson": lesson,
+        "review_sentence": review_sentence,
+    }
+
+
+def create_quiz(state: TutorState) -> TutorState:
+    """학습 내용을 확인하는 객관식 퀴즈를 만듭니다."""
+    topic = state["topic"]
+
+    if topic == "기준금리":
+        quiz = [{
+            "question": "기준금리 동결 뉴스를 읽을 때 가장 중요한 질문은 무엇일까요?",
+            "A": "오늘 주가가 무조건 올랐는가?",
+            "B": "왜 금리를 내리지 않고 유지했는가?",
+            "C": "은행 이름이 무엇인가?",
+            "D": "기사 제목이 몇 글자인가?",
+            "correct": "B",
+            "explanation": "기준금리 뉴스는 결과보다 결정의 이유와 다음 변화 가능성을 읽는 것이 중요합니다.",
+        }]
+    else:
+        quiz = [{
+            "question": "경제뉴스를 읽을 때 가장 중요한 태도는 무엇일까요?",
+            "A": "제목만 보고 판단한다.",
+            "B": "숫자와 원인, 다음 변화를 함께 본다.",
+            "C": "댓글 반응만 확인한다.",
+            "D": "어려운 용어는 모두 무시한다.",
+            "correct": "B",
+            "explanation": "경제뉴스 문해력은 사건, 숫자, 원인, 영향을 연결해 읽는 힘입니다.",
+        }]
+
+    return {
+        **state,
+        "quiz": quiz,
+    }
+
+
+def grade_answer(state: TutorState) -> TutorState:
+    """사용자의 답변을 채점하고 피드백을 제공합니다."""
+    quiz = state["quiz"][0]
+    user_answer = state.get("answer", "").strip().upper()
+    correct = quiz["correct"]
+
+    if user_answer == correct:
+        feedback = f"정답입니다. {quiz['explanation']}"
+    elif user_answer:
+        feedback = f"아쉽습니다. 정답은 {correct}입니다. {quiz['explanation']}"
+    else:
+        feedback = f"아직 답변이 없습니다. 문제를 읽고 A/B/C/D 중 하나를 골라보세요. 힌트: {quiz['explanation']}"
+
+    return {
+        **state,
+        "feedback": feedback,
+    }
+
+
+def build_graph():
+    graph_builder = StateGraph(TutorState)
+
+    graph_builder.add_node("analyze_request", analyze_request)
+    graph_builder.add_node("build_micro_lesson", build_micro_lesson)
+    graph_builder.add_node("create_quiz", create_quiz)
+    graph_builder.add_node("grade_answer", grade_answer)
+
+    graph_builder.add_edge(START, "analyze_request")
+    graph_builder.add_edge("analyze_request", "build_micro_lesson")
+    graph_builder.add_edge("build_micro_lesson", "create_quiz")
+    graph_builder.add_edge("create_quiz", "grade_answer")
+    graph_builder.add_edge("grade_answer", END)
+
+    return graph_builder.compile()
+
+
+def main():
+    app = build_graph()
+
+    initial_state: TutorState = {
+        "user_input": "초보자에게 기준금리 동결 뉴스를 쉽게 설명해줘",
+        "topic": "",
+        "level": "",
+        "lesson": [],
+        "quiz": [],
+        "answer": "B",
+        "feedback": "",
+        "review_sentence": "",
+    }
+
+    result = app.invoke(initial_state)
+
+    print("=== FinLit Reading Coach ===")
+    print("주제:", result["topic"])
+    print("난이도:", result["level"])
+
+    print("\n=== 미니 레슨 ===")
+    for line in result["lesson"]:
+        print("-", line)
+
+    print("\n=== 퀴즈 ===")
+    q = result["quiz"][0]
+    print(q["question"])
+    for key in ["A", "B", "C", "D"]:
+        print(f"{key}. {q[key]}")
+
+    print("\n=== 피드백 ===")
+    print(result["feedback"])
+
+    print("\n=== 한 줄 복습 ===")
+    print(result["review_sentence"])
+
+
+if __name__ == "__main__":
+    main()
