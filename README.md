@@ -27,9 +27,10 @@ FinLit Reading Coach는 어려운 경제 문장을 짧은 학습 세션으로 �
 
 ## 3. 핵심 기능
 
-### 1) 학습 요청 분석
+### 1) 학습 요청 분석 및 경로 선택
 
 사용자가 입력한 경제뉴스 문장 또는 학습 요청에서 핵심 주제와 학습 난이도를 추정합니다.
+이후 사용자 입력에 "개념", "뜻", "금리", "환율", "물가", "공시"처럼 보강 설명이 필요한 단어가 있으면 Tool 보강 경로로 보내고, 일반 학습 요청이면 바로 미니 레슨 경로로 보냅니다.
 
 예시 입력:
 - 초보자에게 기준금리 동결 뉴스를 쉽게 설명해줘
@@ -49,11 +50,15 @@ FinLit Reading Coach는 어려운 경제 문장을 짧은 학습 세션으로 �
 - 나와의 연결
 - 한 줄 복습
 
-### 3) 퀴즈 생성
+### 3) 금융 개념 Tool 보강
+
+커스텀 Tool인 `lookup_finlit_concept`를 사용해 기준금리, 환율, 물가, 기업공시 같은 핵심 금융 개념 설명을 찾아 레슨에 추가합니다.
+
+### 4) 퀴즈 생성
 
 학습 내용을 확인할 수 있는 객관식 퀴즈를 만듭니다.
 
-### 4) 답변 피드백
+### 5) 답변 피드백
 
 사용자의 답변을 채점하고, 왜 그 답이 맞는지 또는 틀렸는지 설명합니다.
 
@@ -66,7 +71,10 @@ FinLit Reading Coach는 어려운 경제 문장을 짧은 학습 세션으로 �
 ~~~mermaid
 flowchart TD
     START([START]) --> A[analyze_request<br/>학습 요청 분석]
-    A --> B[build_micro_lesson<br/>미니 레슨 생성]
+    A --> R{route_learning_path<br/>Conditional Edge}
+    R -->|use_tool| T[enrich_with_tool<br/>커스텀 Tool 호출]
+    R -->|direct_lesson| B[build_micro_lesson<br/>미니 레슨 생성]
+    T --> B
     B --> C[create_quiz<br/>퀴즈 생성]
     C --> D[grade_answer<br/>답변 피드백]
     D --> END([END])
@@ -74,7 +82,7 @@ flowchart TD
 
 흐름 요약:
 
-START → analyze_request → build_micro_lesson → create_quiz → grade_answer → END
+START → analyze_request → route_learning_path → enrich_with_tool 또는 build_micro_lesson → create_quiz → grade_answer → END
 
 텍스트 흐름도:
 
@@ -85,10 +93,17 @@ START → analyze_request → build_micro_lesson → create_quiz → grade_answe
 학습 요청 분석
    |
    v
-[build_micro_lesson]
-미니 레슨 생성
+[route_learning_path]
+사용자 입력에 따라 Tool 보강 여부 결정
    |
-   v
+   +-- use_tool --> [enrich_with_tool]
+   |                 커스텀 Tool로 개념 설명 보강
+   |                 |
+   |                 v
+   +-----------> [build_micro_lesson]
+                미니 레슨 생성
+                  |
+                  v
 [create_quiz]
 퀴즈 생성
    |
@@ -104,6 +119,7 @@ START → analyze_request → build_micro_lesson → create_quiz → grade_answe
 | 노드 | 역할 |
 |---|---|
 | analyze_request | 사용자 입력에서 학습 주제와 난이도를 추정합니다. |
+| enrich_with_tool | 커스텀 Tool을 호출해 금융 개념 설명을 보강합니다. |
 | build_micro_lesson | 주제에 맞는 미니 레슨과 한 줄 복습 문장을 생성합니다. |
 | create_quiz | 학습 내용을 확인하는 객관식 퀴즈를 생성합니다. |
 | grade_answer | 사용자의 답변을 채점하고 피드백을 제공합니다. |
@@ -115,6 +131,8 @@ TutorState는 다음 정보를 관리합니다.
 - user_input
 - topic
 - level
+- route
+- tool_result
 - lesson
 - quiz
 - answer
@@ -131,13 +149,19 @@ TutorState는 다음 정보를 관리합니다.
 
     uv run python main.py
 
+테스트:
+
+    uv run python -m unittest
+
 ## 8. 과제 요구사항 충족 여부
 
 | 요구사항 | 충족 여부 |
 |---|---|
 | LangGraph 사용 | 충족 |
 | State 정의 | 충족 |
-| 최소 2개 노드 구현 | 충족 — 4개 노드 구현 |
+| 최소 3개 노드 구현 | 충족 — 5개 노드 구현 |
+| Conditional Edge 구현 | 충족 — `route_learning_path`가 `use_tool` 또는 `direct_lesson` 경로를 선택 |
+| Tool 연동 | 충족 — `lookup_finlit_concept` 커스텀 Tool 연동 |
 | 기본 그래프 연결 | 충족 |
 | 실행 가능한 코드 | 충족 |
 | 교육 & 학습 테마 | 충족 |

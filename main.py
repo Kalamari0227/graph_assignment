@@ -1,4 +1,5 @@
-from typing import TypedDict, List, Dict
+from typing import TypedDict, List, Dict, Literal
+from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
 
 
@@ -6,11 +7,26 @@ class TutorState(TypedDict):
     user_input: str
     topic: str
     level: str
+    route: str
+    tool_result: str
     lesson: List[str]
     quiz: List[Dict[str, str]]
     answer: str
     feedback: str
     review_sentence: str
+
+
+@tool
+def lookup_finlit_concept(topic: str) -> str:
+    """금융문해력 학습에 필요한 핵심 개념 설명을 찾아옵니다."""
+    glossary = {
+        "기준금리": "기준금리는 중앙은행이 경제 상황에 맞춰 조정하는 대표 금리입니다. 대출, 예금, 투자 심리에 넓게 영향을 줍니다.",
+        "환율": "환율은 서로 다른 나라 돈의 교환 비율입니다. 수출입 가격, 해외여행 비용, 기업 실적에 영향을 줄 수 있습니다.",
+        "물가": "물가는 상품과 서비스 가격의 전반적인 수준입니다. 물가 상승은 같은 돈으로 살 수 있는 양이 줄어드는 상황과 연결됩니다.",
+        "기업공시": "기업공시는 투자자와 시장에 중요한 회사 정보를 공식적으로 알리는 자료입니다.",
+        "경제뉴스 읽기": "경제뉴스는 사건, 숫자, 원인, 이해관계자, 다음 변화를 함께 연결해 읽어야 합니다.",
+    }
+    return glossary.get(topic, glossary["경제뉴스 읽기"])
 
 
 def analyze_request(state: TutorState) -> TutorState:
@@ -42,9 +58,42 @@ def analyze_request(state: TutorState) -> TutorState:
     }
 
 
+def route_learning_path(state: TutorState) -> Literal["use_tool", "direct_lesson"]:
+    """사용자 입력에 따라 Tool 보강 경로 또는 바로 레슨 경로를 선택합니다."""
+    text = state["user_input"]
+    tool_keywords = [
+        "개념",
+        "뜻",
+        "정의",
+        "용어",
+        "검색",
+        "자료",
+        "금리",
+        "환율",
+        "물가",
+        "인플레이션",
+        "공시",
+    ]
+
+    if any(keyword in text for keyword in tool_keywords):
+        return "use_tool"
+    return "direct_lesson"
+
+
+def enrich_with_tool(state: TutorState) -> TutorState:
+    """커스텀 금융 개념 Tool을 호출해 레슨에 사용할 참고 설명을 보강합니다."""
+    tool_result = lookup_finlit_concept.invoke(state["topic"])
+    return {
+        **state,
+        "route": "use_tool",
+        "tool_result": tool_result,
+    }
+
+
 def build_micro_lesson(state: TutorState) -> TutorState:
     """주제와 난이도에 맞는 짧은 학습 콘텐츠를 만듭니다."""
     topic = state["topic"]
+    tool_result = state.get("tool_result", "")
 
     if topic == "기준금리":
         lesson = [
@@ -71,8 +120,12 @@ def build_micro_lesson(state: TutorState) -> TutorState:
         ]
         review_sentence = "경제뉴스는 사건 자체보다 그 사건이 어떤 판단으로 이어지는지 읽는 연습이 중요합니다."
 
+    if tool_result:
+        lesson.append(f"도구 참고: {tool_result}")
+
     return {
         **state,
+        "route": state.get("route") or "direct_lesson",
         "lesson": lesson,
         "review_sentence": review_sentence,
     }
@@ -132,12 +185,21 @@ def build_graph():
     graph_builder = StateGraph(TutorState)
 
     graph_builder.add_node("analyze_request", analyze_request)
+    graph_builder.add_node("enrich_with_tool", enrich_with_tool)
     graph_builder.add_node("build_micro_lesson", build_micro_lesson)
     graph_builder.add_node("create_quiz", create_quiz)
     graph_builder.add_node("grade_answer", grade_answer)
 
     graph_builder.add_edge(START, "analyze_request")
-    graph_builder.add_edge("analyze_request", "build_micro_lesson")
+    graph_builder.add_conditional_edges(
+        "analyze_request",
+        route_learning_path,
+        {
+            "use_tool": "enrich_with_tool",
+            "direct_lesson": "build_micro_lesson",
+        },
+    )
+    graph_builder.add_edge("enrich_with_tool", "build_micro_lesson")
     graph_builder.add_edge("build_micro_lesson", "create_quiz")
     graph_builder.add_edge("create_quiz", "grade_answer")
     graph_builder.add_edge("grade_answer", END)
@@ -152,6 +214,8 @@ def main():
         "user_input": "초보자에게 기준금리 동결 뉴스를 쉽게 설명해줘",
         "topic": "",
         "level": "",
+        "route": "",
+        "tool_result": "",
         "lesson": [],
         "quiz": [],
         "answer": "B",
@@ -164,6 +228,7 @@ def main():
     print("=== FinLit Reading Coach ===")
     print("주제:", result["topic"])
     print("난이도:", result["level"])
+    print("학습 경로:", result["route"])
 
     print("\n=== 미니 레슨 ===")
     for line in result["lesson"]:
