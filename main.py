@@ -1,6 +1,9 @@
-from typing import TypedDict, List, Dict, Literal
+import operator
+from typing import Annotated, TypedDict, List, Dict, Literal
 from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send
 
 
 class TutorState(TypedDict):
@@ -9,11 +12,18 @@ class TutorState(TypedDict):
     level: str
     route: str
     tool_result: str
+    review_activity: str
     lesson: List[str]
     quiz: List[Dict[str, str]]
+    practice_cards: Annotated[List[str], operator.add]
     answer: str
     feedback: str
     review_sentence: str
+
+
+class ReviewTaskState(TypedDict):
+    topic: str
+    review_focus: str
 
 
 @tool
@@ -27,6 +37,17 @@ def lookup_finlit_concept(topic: str) -> str:
         "경제뉴스 읽기": "경제뉴스는 사건, 숫자, 원인, 이해관계자, 다음 변화를 함께 연결해 읽어야 합니다.",
     }
     return glossary.get(topic, glossary["경제뉴스 읽기"])
+
+
+@tool
+def suggest_review_activity(level: str) -> str:
+    """학습 난이도에 맞는 복습 활동을 추천합니다."""
+    activities = {
+        "입문": "오늘 배운 개념을 자기 말로 한 문장으로 다시 써보세요.",
+        "기초": "기사 제목을 보고 원인, 숫자, 영향을 각각 하나씩 표시해보세요.",
+        "심화": "같은 주제를 다룬 다른 기사와 비교해 관점 차이를 찾아보세요.",
+    }
+    return activities.get(level, activities["기초"])
 
 
 def analyze_request(state: TutorState) -> TutorState:
@@ -51,11 +72,7 @@ def analyze_request(state: TutorState) -> TutorState:
     else:
         level = "기초"
 
-    return {
-        **state,
-        "topic": topic,
-        "level": level,
-    }
+    return {"topic": topic, "level": level}
 
 
 def route_learning_path(state: TutorState) -> Literal["use_tool", "direct_lesson"]:
@@ -81,12 +98,13 @@ def route_learning_path(state: TutorState) -> Literal["use_tool", "direct_lesson
 
 
 def enrich_with_tool(state: TutorState) -> TutorState:
-    """커스텀 금융 개념 Tool을 호출해 레슨에 사용할 참고 설명을 보강합니다."""
+    """커스텀 Tool들을 호출해 레슨에 사용할 참고 설명과 복습 활동을 보강합니다."""
     tool_result = lookup_finlit_concept.invoke(state["topic"])
+    review_activity = suggest_review_activity.invoke(state["level"])
     return {
-        **state,
         "route": "use_tool",
         "tool_result": tool_result,
+        "review_activity": review_activity,
     }
 
 
@@ -123,12 +141,35 @@ def build_micro_lesson(state: TutorState) -> TutorState:
     if tool_result:
         lesson.append(f"도구 참고: {tool_result}")
 
+    if state.get("review_activity"):
+        lesson.append(f"추천 복습 활동: {state['review_activity']}")
+
     return {
-        **state,
         "route": state.get("route") or "direct_lesson",
         "lesson": lesson,
         "review_sentence": review_sentence,
     }
+
+
+def dispatch_review_tasks(state: TutorState) -> List[Send]:
+    """Send API로 복습 카드 생성 작업을 병렬 분배합니다."""
+    review_focuses = ["핵심 개념", "오해 포인트", "생활 연결"]
+    return [
+        Send(
+            "build_practice_card",
+            {
+                "topic": state["topic"],
+                "review_focus": review_focus,
+            },
+        )
+        for review_focus in review_focuses
+    ]
+
+
+def build_practice_card(state: ReviewTaskState) -> Dict[str, List[str]]:
+    """병렬 작업 단위로 주제별 복습 카드를 하나 생성합니다."""
+    card = f"{state['review_focus']} 복습 카드: '{state['topic']}' 주제를 한 문장으로 설명해보세요."
+    return {"practice_cards": [card]}
 
 
 def create_quiz(state: TutorState) -> TutorState:
@@ -156,10 +197,7 @@ def create_quiz(state: TutorState) -> TutorState:
             "explanation": "경제뉴스 문해력은 사건, 숫자, 원인, 영향을 연결해 읽는 힘입니다.",
         }]
 
-    return {
-        **state,
-        "quiz": quiz,
-    }
+    return {"quiz": quiz}
 
 
 def grade_answer(state: TutorState) -> TutorState:
@@ -175,18 +213,19 @@ def grade_answer(state: TutorState) -> TutorState:
     else:
         feedback = f"아직 답변이 없습니다. 문제를 읽고 A/B/C/D 중 하나를 골라보세요. 힌트: {quiz['explanation']}"
 
-    return {
-        **state,
-        "feedback": feedback,
-    }
+    return {"feedback": feedback}
 
 
-def build_graph():
+memory = InMemorySaver()
+
+
+def build_graph(use_memory: bool = True):
     graph_builder = StateGraph(TutorState)
 
     graph_builder.add_node("analyze_request", analyze_request)
     graph_builder.add_node("enrich_with_tool", enrich_with_tool)
     graph_builder.add_node("build_micro_lesson", build_micro_lesson)
+    graph_builder.add_node("build_practice_card", build_practice_card)
     graph_builder.add_node("create_quiz", create_quiz)
     graph_builder.add_node("grade_answer", grade_answer)
 
@@ -200,10 +239,17 @@ def build_graph():
         },
     )
     graph_builder.add_edge("enrich_with_tool", "build_micro_lesson")
-    graph_builder.add_edge("build_micro_lesson", "create_quiz")
+    graph_builder.add_conditional_edges(
+        "build_micro_lesson",
+        dispatch_review_tasks,
+        ["build_practice_card"],
+    )
+    graph_builder.add_edge("build_practice_card", "create_quiz")
     graph_builder.add_edge("create_quiz", "grade_answer")
     graph_builder.add_edge("grade_answer", END)
 
+    if use_memory:
+        return graph_builder.compile(checkpointer=memory)
     return graph_builder.compile()
 
 
@@ -216,14 +262,17 @@ def main():
         "level": "",
         "route": "",
         "tool_result": "",
+        "review_activity": "",
         "lesson": [],
         "quiz": [],
+        "practice_cards": [],
         "answer": "B",
         "feedback": "",
         "review_sentence": "",
     }
 
-    result = app.invoke(initial_state)
+    config = {"configurable": {"thread_id": "finlit-demo"}}
+    result = app.invoke(initial_state, config)
 
     print("=== FinLit Reading Coach ===")
     print("주제:", result["topic"])
@@ -245,6 +294,10 @@ def main():
 
     print("\n=== 한 줄 복습 ===")
     print(result["review_sentence"])
+
+    print("\n=== 병렬 복습 카드 ===")
+    for card in result["practice_cards"]:
+        print("-", card)
 
 
 if __name__ == "__main__":

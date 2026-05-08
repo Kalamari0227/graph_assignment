@@ -50,15 +50,20 @@ FinLit Reading Coach는 어려운 경제 문장을 짧은 학습 세션으로 �
 - 나와의 연결
 - 한 줄 복습
 
-### 3) 금융 개념 Tool 보강
+### 3) 여러 Tool 기반 학습 보강
 
 커스텀 Tool인 `lookup_finlit_concept`를 사용해 기준금리, 환율, 물가, 기업공시 같은 핵심 금융 개념 설명을 찾아 레슨에 추가합니다.
+또 다른 커스텀 Tool인 `suggest_review_activity`를 사용해 학습 난이도에 맞는 복습 활동을 추천합니다.
 
-### 4) 퀴즈 생성
+### 4) 병렬 복습 카드 생성
+
+Send API를 사용해 핵심 개념, 오해 포인트, 생활 연결 복습 카드를 병렬로 생성합니다.
+
+### 5) 퀴즈 생성
 
 학습 내용을 확인할 수 있는 객관식 퀴즈를 만듭니다.
 
-### 5) 답변 피드백
+### 6) 답변 피드백
 
 사용자의 답변을 채점하고, 왜 그 답이 맞는지 또는 틀렸는지 설명합니다.
 
@@ -72,17 +77,23 @@ FinLit Reading Coach는 어려운 경제 문장을 짧은 학습 세션으로 �
 flowchart TD
     START([START]) --> A[analyze_request<br/>학습 요청 분석]
     A --> R{route_learning_path<br/>Conditional Edge}
-    R -->|use_tool| T[enrich_with_tool<br/>커스텀 Tool 호출]
+    R -->|use_tool| T[enrich_with_tool<br/>커스텀 Tool 2개 호출]
     R -->|direct_lesson| B[build_micro_lesson<br/>미니 레슨 생성]
     T --> B
-    B --> C[create_quiz<br/>퀴즈 생성]
+    B --> S{dispatch_review_tasks<br/>Send API 병렬 분배}
+    S --> P1[build_practice_card<br/>핵심 개념 카드]
+    S --> P2[build_practice_card<br/>오해 포인트 카드]
+    S --> P3[build_practice_card<br/>생활 연결 카드]
+    P1 --> C[create_quiz<br/>퀴즈 생성]
+    P2 --> C
+    P3 --> C
     C --> D[grade_answer<br/>답변 피드백]
     D --> END([END])
 ~~~
 
 흐름 요약:
 
-START → analyze_request → route_learning_path → enrich_with_tool 또는 build_micro_lesson → create_quiz → grade_answer → END
+START → analyze_request → route_learning_path → enrich_with_tool 또는 build_micro_lesson → Send API 병렬 복습 카드 생성 → create_quiz → grade_answer → END
 
 텍스트 흐름도:
 
@@ -104,6 +115,14 @@ START → analyze_request → route_learning_path → enrich_with_tool 또는 bu
                 미니 레슨 생성
                   |
                   v
+[dispatch_review_tasks]
+Send API로 복습 카드 병렬 분배
+   |
+   v
+[build_practice_card]
+핵심 개념 / 오해 포인트 / 생활 연결 카드 생성
+   |
+   v
 [create_quiz]
 퀴즈 생성
    |
@@ -119,8 +138,9 @@ START → analyze_request → route_learning_path → enrich_with_tool 또는 bu
 | 노드 | 역할 |
 |---|---|
 | analyze_request | 사용자 입력에서 학습 주제와 난이도를 추정합니다. |
-| enrich_with_tool | 커스텀 Tool을 호출해 금융 개념 설명을 보강합니다. |
+| enrich_with_tool | 커스텀 Tool 2개를 호출해 금융 개념 설명과 복습 활동을 보강합니다. |
 | build_micro_lesson | 주제에 맞는 미니 레슨과 한 줄 복습 문장을 생성합니다. |
+| build_practice_card | Send API로 병렬 실행되어 복습 카드를 생성합니다. |
 | create_quiz | 학습 내용을 확인하는 객관식 퀴즈를 생성합니다. |
 | grade_answer | 사용자의 답변을 채점하고 피드백을 제공합니다. |
 
@@ -133,11 +153,15 @@ TutorState는 다음 정보를 관리합니다.
 - level
 - route
 - tool_result
+- review_activity
 - lesson
 - quiz
+- practice_cards
 - answer
 - feedback
 - review_sentence
+
+그래프는 `InMemorySaver` 체크포인터와 함께 컴파일되어 `thread_id` 기준으로 실행 상태를 저장합니다.
 
 ## 7. 실행 방법
 
@@ -159,9 +183,12 @@ TutorState는 다음 정보를 관리합니다.
 |---|---|
 | LangGraph 사용 | 충족 |
 | State 정의 | 충족 |
-| 최소 3개 노드 구현 | 충족 — 5개 노드 구현 |
+| 최소 3개 노드 구현 | 충족 — 6개 노드 구현 |
 | Conditional Edge 구현 | 충족 — `route_learning_path`가 `use_tool` 또는 `direct_lesson` 경로를 선택 |
-| Tool 연동 | 충족 — `lookup_finlit_concept` 커스텀 Tool 연동 |
+| Tool 연동 | 충족 — `lookup_finlit_concept`, `suggest_review_activity` 커스텀 Tool 연동 |
+| 병렬 실행 | 충족 — Send API로 복습 카드 3개를 병렬 생성 |
+| 메모리 기능 | 충족 — `InMemorySaver` 체크포인터와 `thread_id` 사용 |
+| 여러 개의 Tool 연동 | 충족 — 2개 Tool 연동 |
 | 기본 그래프 연결 | 충족 |
 | 실행 가능한 코드 | 충족 |
 | 교육 & 학습 테마 | 충족 |
