@@ -4,6 +4,7 @@ from main import (
     TutorState,
     build_graph,
     lookup_finlit_concept,
+    make_initial_state,
     memory,
     route_learning_path,
     suggest_review_activity,
@@ -11,20 +12,7 @@ from main import (
 
 
 def make_state(user_input: str, answer: str = "B") -> TutorState:
-    return {
-        "user_input": user_input,
-        "topic": "",
-        "level": "",
-        "route": "",
-        "tool_result": "",
-        "review_activity": "",
-        "lesson": [],
-        "quiz": [],
-        "practice_cards": [],
-        "answer": answer,
-        "feedback": "",
-        "review_sentence": "",
-    }
+    return make_initial_state(user_input, answer=answer)
 
 
 class FinLitReadingCoachTest(unittest.TestCase):
@@ -47,6 +35,14 @@ class FinLitReadingCoachTest(unittest.TestCase):
         result = suggest_review_activity.invoke("입문")
 
         self.assertIn("자기 말", result)
+
+    def test_initial_state_helper_builds_graph_ready_state(self):
+        state = make_state("환율 개념 알려줘", answer="A")
+
+        self.assertEqual(state["user_input"], "환율 개념 알려줘")
+        self.assertEqual(state["answer"], "A")
+        self.assertEqual(state["practice_cards"], [])
+        self.assertEqual(state["quiz"], [])
 
     def test_graph_enriches_lesson_when_tool_path_is_selected(self):
         app = build_graph(use_memory=False)

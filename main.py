@@ -11,6 +11,7 @@ class TutorState(TypedDict):
     topic: str
     level: str
     route: str
+    prompt_chain: List[str]
     tool_result: str
     review_activity: str
     lesson: List[str]
@@ -19,6 +20,9 @@ class TutorState(TypedDict):
     answer: str
     feedback: str
     review_sentence: str
+    judge_scores: Dict[str, int]
+    judge_feedback: str
+    judge_passed: bool
 
 
 class ReviewTaskState(TypedDict):
@@ -108,6 +112,20 @@ def enrich_with_tool(state: TutorState) -> TutorState:
     }
 
 
+def build_lesson_prompt(state: TutorState) -> TutorState:
+    """앞 노드의 분석 결과를 받아 미니 레슨 생성을 위한 프롬프트를 구성합니다."""
+    route = state.get("route") or "direct_lesson"
+    prompt = (
+        f"[Lesson Prompt] topic={state['topic']}; level={state['level']}; "
+        f"route={route}; concept_note={state.get('tool_result', '')}; "
+        "include: reading sentence, core concept, hidden point, life connection."
+    )
+    return {
+        "route": route,
+        "prompt_chain": [*state.get("prompt_chain", []), prompt],
+    }
+
+
 def build_micro_lesson(state: TutorState) -> TutorState:
     """주제와 난이도에 맞는 짧은 학습 콘텐츠를 만듭니다."""
     topic = state["topic"]
@@ -172,6 +190,16 @@ def build_practice_card(state: ReviewTaskState) -> Dict[str, List[str]]:
     return {"practice_cards": [card]}
 
 
+def build_quiz_prompt(state: TutorState) -> TutorState:
+    """레슨과 복습 카드 결과를 받아 퀴즈 생성을 위한 다음 프롬프트를 구성합니다."""
+    prompt = (
+        f"[Quiz Prompt] topic={state['topic']}; level={state['level']}; "
+        f"lesson_items={len(state['lesson'])}; practice_cards={len(state['practice_cards'])}; "
+        "create one multiple-choice question with four options and an explanation."
+    )
+    return {"prompt_chain": [*state.get("prompt_chain", []), prompt]}
+
+
 def create_quiz(state: TutorState) -> TutorState:
     """학습 내용을 확인하는 객관식 퀴즈를 만듭니다."""
     topic = state["topic"]
@@ -216,7 +244,62 @@ def grade_answer(state: TutorState) -> TutorState:
     return {"feedback": feedback}
 
 
+def ai_as_judge_evaluate(state: TutorState) -> TutorState:
+    """AI-as-judge 패턴을 흉내 낸 루브릭 평가 노드입니다."""
+    lesson_text = " ".join(state["lesson"])
+    quiz = state["quiz"][0] if state["quiz"] else {}
+    feedback = state.get("feedback", "")
+
+    scores = {
+        "lesson_grounding": 1 if state["topic"] in lesson_text else 0,
+        "lesson_structure": int(
+            all(marker in lesson_text for marker in ["핵심 개념", "나와의 연결"])
+        ),
+        "quiz_quality": int(
+            bool(quiz.get("question"))
+            and all(key in quiz for key in ["A", "B", "C", "D", "correct", "explanation"])
+            and quiz.get("correct") in {"A", "B", "C", "D"}
+        ),
+        "feedback_quality": int(bool(feedback) and quiz.get("explanation", "") in feedback),
+    }
+    passed = sum(scores.values()) >= 3
+    missing = [name for name, score in scores.items() if score == 0]
+
+    if passed:
+        judge_feedback = "AI-as-judge 평가 통과: 레슨, 퀴즈, 피드백이 학습 목표에 맞게 구성되었습니다."
+    else:
+        judge_feedback = f"AI-as-judge 평가 보완 필요: {', '.join(missing)} 항목을 개선하세요."
+
+    return {
+        "judge_scores": scores,
+        "judge_feedback": judge_feedback,
+        "judge_passed": passed,
+    }
+
+
 memory = InMemorySaver()
+
+
+def make_initial_state(user_input: str, answer: str = "") -> TutorState:
+    """그래프 실행에 필요한 기본 TutorState를 만듭니다."""
+    return {
+        "user_input": user_input,
+        "topic": "",
+        "level": "",
+        "route": "",
+        "prompt_chain": [],
+        "tool_result": "",
+        "review_activity": "",
+        "lesson": [],
+        "quiz": [],
+        "practice_cards": [],
+        "answer": answer,
+        "feedback": "",
+        "review_sentence": "",
+        "judge_scores": {},
+        "judge_feedback": "",
+        "judge_passed": False,
+    }
 
 
 def build_graph(use_memory: bool = True):
@@ -224,10 +307,13 @@ def build_graph(use_memory: bool = True):
 
     graph_builder.add_node("analyze_request", analyze_request)
     graph_builder.add_node("enrich_with_tool", enrich_with_tool)
+    graph_builder.add_node("build_lesson_prompt", build_lesson_prompt)
     graph_builder.add_node("build_micro_lesson", build_micro_lesson)
     graph_builder.add_node("build_practice_card", build_practice_card)
+    graph_builder.add_node("build_quiz_prompt", build_quiz_prompt)
     graph_builder.add_node("create_quiz", create_quiz)
     graph_builder.add_node("grade_answer", grade_answer)
+    graph_builder.add_node("ai_as_judge_evaluate", ai_as_judge_evaluate)
 
     graph_builder.add_edge(START, "analyze_request")
     graph_builder.add_conditional_edges(
@@ -235,18 +321,21 @@ def build_graph(use_memory: bool = True):
         route_learning_path,
         {
             "use_tool": "enrich_with_tool",
-            "direct_lesson": "build_micro_lesson",
+            "direct_lesson": "build_lesson_prompt",
         },
     )
-    graph_builder.add_edge("enrich_with_tool", "build_micro_lesson")
+    graph_builder.add_edge("enrich_with_tool", "build_lesson_prompt")
+    graph_builder.add_edge("build_lesson_prompt", "build_micro_lesson")
     graph_builder.add_conditional_edges(
         "build_micro_lesson",
         dispatch_review_tasks,
         ["build_practice_card"],
     )
-    graph_builder.add_edge("build_practice_card", "create_quiz")
+    graph_builder.add_edge("build_practice_card", "build_quiz_prompt")
+    graph_builder.add_edge("build_quiz_prompt", "create_quiz")
     graph_builder.add_edge("create_quiz", "grade_answer")
-    graph_builder.add_edge("grade_answer", END)
+    graph_builder.add_edge("grade_answer", "ai_as_judge_evaluate")
+    graph_builder.add_edge("ai_as_judge_evaluate", END)
 
     if use_memory:
         return graph_builder.compile(checkpointer=memory)
@@ -256,20 +345,10 @@ def build_graph(use_memory: bool = True):
 def main():
     app = build_graph()
 
-    initial_state: TutorState = {
-        "user_input": "초보자에게 기준금리 동결 뉴스를 쉽게 설명해줘",
-        "topic": "",
-        "level": "",
-        "route": "",
-        "tool_result": "",
-        "review_activity": "",
-        "lesson": [],
-        "quiz": [],
-        "practice_cards": [],
-        "answer": "B",
-        "feedback": "",
-        "review_sentence": "",
-    }
+    initial_state = make_initial_state(
+        "초보자에게 기준금리 동결 뉴스를 쉽게 설명해줘",
+        answer="B",
+    )
 
     config = {"configurable": {"thread_id": "finlit-demo"}}
     result = app.invoke(initial_state, config)
@@ -298,6 +377,10 @@ def main():
     print("\n=== 병렬 복습 카드 ===")
     for card in result["practice_cards"]:
         print("-", card)
+
+    print("\n=== AI-as-judge 평가 ===")
+    print(result["judge_feedback"])
+    print(result["judge_scores"])
 
 
 if __name__ == "__main__":
